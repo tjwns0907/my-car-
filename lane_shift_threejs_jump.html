@@ -1,0 +1,306 @@
+<!doctype html>
+<html lang="ko">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>Three.js 초보자용 3D 자동차 게임</title>
+<style>
+  :root{color-scheme:dark;--cyan:#75f3ff;--bg:#08111d}
+  *{box-sizing:border-box}
+  html,body{margin:0;width:100%;height:100%;overflow:hidden;background:var(--bg);font-family:system-ui,-apple-system,"Segoe UI",sans-serif;color:#f4fbff}
+  #game{position:fixed;inset:0}
+  canvas{display:block;width:100%;height:100%}
+  .hud{position:fixed;inset:0;pointer-events:none;padding:20px;display:flex;flex-direction:column;justify-content:space-between}
+  .top{display:flex;align-items:flex-start;justify-content:space-between;gap:12px}
+  .logo{font-size:12px;letter-spacing:.22em;font-weight:900;color:var(--cyan)}
+  .logo small{display:block;color:#8da4bc;font-weight:500;font-size:10px;letter-spacing:.1em;margin-top:5px}
+  .stats{display:flex;gap:8px}
+  .stat{padding:9px 13px;border:1px solid #ffffff24;border-radius:12px;background:#07111bd9;min-width:86px}
+  .stat span{display:block;font-size:9px;letter-spacing:.14em;color:#8fa6bd}
+  .stat strong{font-size:21px;font-variant-numeric:tabular-nums}
+  .footer{font-size:11px;color:#b2c3d5;display:flex;justify-content:space-between;gap:12px}
+  .panel-wrap{position:fixed;inset:0;display:grid;place-items:center;padding:18px;background:#02071155}
+  .panel{width:min(420px,100%);padding:30px;border-radius:22px;background:linear-gradient(145deg,#13283aF5,#07111df5);border:1px solid #75f3ff40;box-shadow:0 20px 80px #0008;text-align:center}
+  .eyebrow{font-size:10px;letter-spacing:.25em;color:var(--cyan);font-weight:800}
+  h1{font-size:clamp(34px,8vw,48px);letter-spacing:-.05em;line-height:1;margin:14px 0}
+  p{font-size:13px;color:#b2c3d5;line-height:1.7}
+  button{font:inherit;font-weight:800;border:0;border-radius:11px;background:var(--cyan);color:#06111b;padding:13px 18px;cursor:pointer}
+  #start{width:100%;margin-top:8px}
+  .hint{font-size:10px;color:#8198af}
+  .hidden{display:none}
+  .touch{position:fixed;bottom:24px;left:0;right:0;display:none;justify-content:space-between;padding:0 20px;pointer-events:none}
+  .touch button{pointer-events:auto;width:62px;height:54px;padding:0;font-size:23px;background:#07111bd9;color:#eafcff;border:1px solid #75f3ff70}
+  @media(max-width:600px){.touch{display:flex}.hud{padding:14px}.stat{min-width:70px;padding:7px 9px}.stat strong{font-size:18px}.footer span:last-child{display:none}.panel{padding:24px}}
+</style>
+</head>
+<body>
+<div id="game"></div>
+<div class="hud">
+  <div class="top">
+    <div class="logo">LANE / SHIFT <small>THREE.JS BEGINNER DRIVE</small></div>
+    <div class="stats">
+      <div class="stat"><span>DISTANCE</span><strong id="score">0000</strong></div>
+      <div class="stat"><span>CRASHES</span><strong id="status">—</strong></div>
+    </div>
+  </div>
+  <div class="footer"><span>← → / A·D 차선 이동 · SPACE 점프</span><span>장애물을 피하며 최대한 멀리 달려 봐</span></div>
+</div>
+<div class="touch"><button id="left" aria-label="왼쪽">←</button><button id="right" aria-label="오른쪽">→</button></div>
+<div class="panel-wrap" id="overlay">
+  <div class="panel">
+    <div class="eyebrow" id="eyebrow">THREE.JS ARCADE</div>
+    <h1 id="heading">LANE<br>SHIFT</h1>
+    <p id="message">3차선 도로에서 장애물을 피하는 간단한 3D 자동차 게임이야.<br>← → 또는 A / D로 이동하고, 스페이스바로 점프해 봐.</p>
+    <button id="start">게임 시작</button>
+    <p class="hint">장애물에 부딪히면 게임 종료 · 시작 후 언제든 재시작 가능</p>
+  </div>
+</div>
+<script type="module">
+import * as THREE from 'https://cdn.jsdelivr.net/npm/three@0.165.0/build/three.module.js';
+
+const mount = document.querySelector('#game');
+const scoreEl = document.querySelector('#score');
+const statusEl = document.querySelector('#status');
+const overlay = document.querySelector('#overlay');
+const startButton = document.querySelector('#start');
+const heading = document.querySelector('#heading');
+const message = document.querySelector('#message');
+const eyebrow = document.querySelector('#eyebrow');
+
+const scene = new THREE.Scene();
+scene.background = new THREE.Color(0x08111d);
+scene.fog = new THREE.Fog(0x08111d, 28, 105);
+
+const camera = new THREE.PerspectiveCamera(60, innerWidth / innerHeight, 0.1, 180);
+camera.position.set(0, 6.5, 10);
+camera.lookAt(0, 0, -8);
+
+const renderer = new THREE.WebGLRenderer({ antialias: true });
+renderer.setPixelRatio(Math.min(devicePixelRatio, 2));
+renderer.setSize(innerWidth, innerHeight);
+renderer.shadowMap.enabled = true;
+renderer.shadowMap.type = THREE.PCFSoftShadowMap;
+renderer.toneMapping = THREE.ACESFilmicToneMapping;
+renderer.toneMappingExposure = 1.1;
+mount.appendChild(renderer.domElement);
+
+scene.add(new THREE.HemisphereLight(0xbfeaff, 0x172032, 2.0));
+const sun = new THREE.DirectionalLight(0xffffff, 2.4);
+sun.position.set(-5, 12, 7);
+sun.castShadow = true;
+sun.shadow.mapSize.set(1024, 1024);
+scene.add(sun);
+
+const mat = (color, roughness=0.65, metalness=0) =>
+  new THREE.MeshStandardMaterial({ color, roughness, metalness });
+
+const roadMat = mat(0x263343);
+const lineMat = mat(0xc6e3ef);
+const cyanMat = mat(0x75f3ff, 0.35, 0.2);
+const darkMat = mat(0x0a1019);
+const road = new THREE.Mesh(new THREE.BoxGeometry(10, 0.2, 100), roadMat);
+road.position.set(0, -0.12, -35);
+road.receiveShadow = true;
+scene.add(road);
+
+// Road shoulders and three-lane divider dashes.
+for (const x of [-5.05, 5.05]) {
+  const edge = new THREE.Mesh(new THREE.BoxGeometry(0.12, 0.08, 100), cyanMat);
+  edge.position.set(x, 0.01, -35);
+  scene.add(edge);
+}
+const dashes = [];
+for (const x of [-5/3, 5/3]) {
+  for (let i=0; i<22; i++) {
+    const dash = new THREE.Mesh(new THREE.BoxGeometry(0.055, 0.025, 1.6), lineMat);
+    dash.position.set(x, 0.015, 10 - i*4.6);
+    scene.add(dash);
+    dashes.push(dash);
+  }
+}
+
+// Simple blocky car built from basic 3D shapes; no external model required.
+function makeCar(color, isPlayer=false) {
+  const group = new THREE.Group();
+  const bodyMat = mat(color, 0.3, 0.25);
+  const glassMat = mat(0x142b40, 0.22, 0.15);
+  const body = new THREE.Mesh(new THREE.BoxGeometry(1.25, 0.42, 2.05), bodyMat);
+  body.position.y = 0.62; body.castShadow = true; group.add(body);
+  const cabin = new THREE.Mesh(new THREE.BoxGeometry(0.86, 0.48, 0.92), glassMat);
+  cabin.position.set(0, 1.03, -0.12); cabin.castShadow = true; group.add(cabin);
+  const hood = new THREE.Mesh(new THREE.BoxGeometry(1.05, 0.12, 0.52), bodyMat);
+  hood.position.set(0, 0.86, -0.67); hood.castShadow = true; group.add(hood);
+  for (const x of [-0.68, 0.68]) {
+    for (const z of [-0.62, 0.68]) {
+      const wheel = new THREE.Mesh(new THREE.BoxGeometry(0.22, 0.43, 0.43), darkMat);
+      wheel.position.set(x, 0.39, z); wheel.castShadow = true; group.add(wheel);
+    }
+  }
+  const lampMat = mat(isPlayer ? 0xbfffff : 0xffd5a0, 0.25, 0.1);
+  for (const x of [-0.42, 0.42]) {
+    const lamp = new THREE.Mesh(new THREE.BoxGeometry(0.2, 0.11, 0.06), lampMat);
+    lamp.position.set(x, 0.68, -1.04); group.add(lamp);
+  }
+  if (isPlayer) {
+    const glow = new THREE.PointLight(0x36dfff, 1.2, 5);
+    glow.position.set(0, 0.8, 0); group.add(glow);
+  }
+  return group;
+}
+
+const laneX = [-3.25, 0, 3.25];
+const player = makeCar(0x1bd4e8, true);
+player.position.set(laneX[1], 0, 4);
+scene.add(player);
+
+const obstacles = [];
+const obstacleColors = [0xff5c7a, 0xffb45c, 0x9d8cff, 0x64e3a1];
+let running = false;
+let lane = 1;
+let distance = 0;
+// Jump state: Space starts a short jump; jumpHeight is the car's vertical offset.
+let jumpTime = 0;
+const jumpDuration = 0.78;
+const jumpHeightMax = 2.25;
+let jumpHeight = 0;
+let speed = 18;
+let spawnTimer = 0;
+let lastTime = 0;
+let animationId = 0;
+
+function addObstacle() {
+  const laneIndex = Math.floor(Math.random() * 3);
+  const obstacle = makeCar(obstacleColors[Math.floor(Math.random()*obstacleColors.length)]);
+  obstacle.scale.setScalar(0.9);
+  obstacle.position.set(laneX[laneIndex], 0, -48);
+  scene.add(obstacle);
+  obstacles.push({ mesh: obstacle, lane: laneIndex, passed: false });
+}
+function clearObstacles() {
+  for (const item of obstacles) scene.remove(item.mesh);
+  obstacles.length = 0;
+}
+function resetGame() {
+  clearObstacles();
+  lane = 1;
+  player.position.x = laneX[lane];
+  player.position.y = 0;
+  jumpTime = 0;
+  jumpHeight = 0;
+  distance = 0;
+  speed = 18;
+  spawnTimer = 0.8;
+  scoreEl.textContent = '0000';
+  statusEl.textContent = '—';
+  running = true;
+  overlay.classList.add('hidden');
+  lastTime = performance.now();
+  cancelAnimationFrame(animationId);
+  animationId = requestAnimationFrame(loop);
+}
+function finishGame() {
+  running = false;
+  statusEl.textContent = '1';
+  eyebrow.textContent = 'RUN COMPLETE';
+  heading.innerHTML = 'TRY<br>AGAIN';
+  message.innerHTML = `주행 거리 <strong style="color:#75f3ff">${Math.floor(distance).toString().padStart(4,'0')}</strong><br>장애물에 부딪혔어. 다시 도전해 봐!`;
+  startButton.textContent = '다시 시작';
+  overlay.classList.remove('hidden');
+}
+function changeLane(direction) {
+  if (!running) return;
+  lane = Math.max(0, Math.min(2, lane + direction));
+}
+function jump() {
+  if (!running || jumpTime > 0) return; // No mid-air double jump.
+  jumpTime = 0.001;
+}
+function loop(now) {
+  if (!running) return;
+  const dt = Math.min((now - lastTime) / 1000, 0.05);
+  lastTime = now;
+  distance += speed * dt * 0.55;
+  speed = Math.min(30, 18 + distance * 0.025);
+  scoreEl.textContent = Math.floor(distance).toString().padStart(4, '0');
+
+  // Smoothly move toward the selected lane.
+  player.position.x += (laneX[lane] - player.position.x) * Math.min(1, dt * 10);
+  player.rotation.z = (laneX[lane] - player.position.x) * -0.035;
+
+  // Jump follows a smooth arc and returns to the road automatically.
+  if (jumpTime > 0) {
+    jumpTime += dt;
+    if (jumpTime >= jumpDuration) {
+      jumpTime = 0;
+      jumpHeight = 0;
+    } else {
+      const progress = jumpTime / jumpDuration;
+      jumpHeight = Math.sin(progress * Math.PI) * jumpHeightMax;
+    }
+  }
+  player.position.y = jumpHeight;
+
+  // Move lane markings toward the player to suggest forward motion.
+  for (const dash of dashes) {
+    dash.position.z += speed * dt;
+    if (dash.position.z > 12) dash.position.z -= 101.2;
+  }
+
+  spawnTimer -= dt;
+  if (spawnTimer <= 0) {
+    addObstacle();
+    spawnTimer = Math.max(0.62, 1.25 - distance * 0.0015) + Math.random() * 0.35;
+  }
+
+  for (let i=obstacles.length-1; i>=0; i--) {
+    const item = obstacles[i];
+    item.mesh.position.z += speed * dt;
+    // Basic collision check: close in depth and in the same lane.
+    const closeZ = Math.abs(item.mesh.position.z - player.position.z) < 1.7;
+    const closeX = Math.abs(item.mesh.position.x - player.position.x) < 1.45;
+    // A sufficiently high jump clears an obstacle in the same lane.
+    if (closeZ && closeX && jumpHeight < 1.05) {
+      finishGame();
+      return;
+    }
+    if (item.mesh.position.z > 13) {
+      scene.remove(item.mesh);
+      obstacles.splice(i, 1);
+    }
+  }
+
+  camera.position.x += (player.position.x * 0.12 - camera.position.x) * dt * 2;
+  camera.lookAt(player.position.x * 0.08, 0.5, -8);
+  renderer.render(scene, camera);
+  animationId = requestAnimationFrame(loop);
+}
+
+startButton.addEventListener('click', () => {
+  eyebrow.textContent = 'THREE.JS ARCADE';
+  heading.innerHTML = 'LANE<br>SHIFT';
+  message.innerHTML = '3차선 도로에서 장애물을 피하는 간단한 3D 자동차 게임이야.<br>← → 또는 A / D로 이동하고, 스페이스바로 점프해 봐.';
+  startButton.textContent = '게임 시작';
+  resetGame();
+});
+addEventListener('keydown', (event) => {
+  if (['ArrowLeft','ArrowRight','a','A','d','D',' '].includes(event.key)) event.preventDefault();
+  if (event.key === 'ArrowLeft' || event.key === 'a' || event.key === 'A') changeLane(-1);
+  if (event.key === 'ArrowRight' || event.key === 'd' || event.key === 'D') changeLane(1);
+  if (event.code === 'Space' && running) jump();
+  if ((event.key === 'Enter' || event.key === ' ') && !running) startButton.click();
+});
+document.querySelector('#left').addEventListener('pointerdown', () => changeLane(-1));
+document.querySelector('#right').addEventListener('pointerdown', () => changeLane(1));
+
+addEventListener('resize', () => {
+  camera.aspect = innerWidth / innerHeight;
+  camera.updateProjectionMatrix();
+  renderer.setPixelRatio(Math.min(devicePixelRatio, 2));
+  renderer.setSize(innerWidth, innerHeight);
+});
+
+// Render a still scene behind the start screen.
+renderer.render(scene, camera);
+</script>
+</body>
+</html>
